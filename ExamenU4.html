@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mundo Abierto 3D - Robot Araña Suave</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; }
+    body {
+      background: #080b11;
+      color: #e2e8f0;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+    }
+    #canvas-container { width: 100%; height: 100%; display: block; }
+
+    .hud-top {
+      position: absolute;
+      top: 18px;
+      left: 20px;
+      background: rgba(13, 18, 28, 0.86);
+      border: 1px solid rgba(239, 68, 68, 0.45);
+      border-left: 4px solid #ef4444;
+      backdrop-filter: blur(8px);
+      padding: 14px 18px;
+      border-radius: 10px;
+      pointer-events: none;
+      max-width: 410px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.65);
+    }
+    .hud-top .tag {
+      display: inline-block;
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: #f87171;
+      background: rgba(239, 68, 68, 0.16);
+      padding: 2px 8px;
+      border-radius: 4px;
+      margin-bottom: 6px;
+    }
+    .hud-top h1 { font-size: 1.05rem; color: #f8fafc; margin-bottom: 4px; }
+    .hud-top p { font-size: 0.82rem; color: #94a3b8; line-height: 1.38; }
+
+    .telemetry {
+      position: absolute;
+      top: 18px;
+      right: 20px;
+      background: rgba(13, 18, 28, 0.86);
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      backdrop-filter: blur(8px);
+      padding: 12px 16px;
+      border-radius: 10px;
+      font-size: 0.82rem;
+      min-width: 245px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.65);
+    }
+    .telemetry div {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 6px;
+    }
+    .telemetry div:last-child { margin-bottom: 0; }
+    .telemetry strong { color: #cbd5e1; }
+    .st-walk { color: #4ade80; font-weight: 700; }
+    .st-climb { color: #fbbf24; font-weight: 700; }
+    .st-avoid { color: #f87171; font-weight: 700; }
+
+    .controls {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 9px;
+      justify-content: center;
+      background: rgba(13, 18, 28, 0.88);
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      backdrop-filter: blur(8px);
+      padding: 10px 14px;
+      border-radius: 12px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.75);
+      max-width: 96vw;
+    }
+    button, select {
+      background: #1e293b;
+      color: #f8fafc;
+      border: 1px solid #334155;
+      padding: 8px 13px;
+      border-radius: 8px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.16s ease;
+    }
+    button:hover, select:hover { background: #334155; border-color: #64748b; }
+    button.primary { background: #dc2626; border-color: #ef4444; }
+    button.primary:hover { background: #b91c1c; }
+  </style>
+</head>
+<body>
+  <div id="canvas-container"></div>
+
+  <div class="hud-top">
+    <span class="tag">Mundo Abierto Continuo • Soft Robotics</span>
+    <h1>Robot Araña Suave Autónoma</h1>
+    <p>
+      <b>Clic en el suelo:</b> Colocar bloque alto (cambia dirección).<br>
+      <b>Shift + Clic:</b> Colocar bloque bajo (lo trepa).<br>
+      <b>Arrastrar mouse:</b> Rotar cámara 360° • <b>Rueda:</b> Zoom.
+    </p>
+  </div>
+
+  <div class="telemetry">
+    <div><strong>Estado:</strong> <span id="actionText" class="st-walk">EXPLORANDO</span></div>
+    <div><strong>Posición (X, Z):</strong> <span id="posText">0.0, 0.0</span></div>
+    <div><strong>Rumbo / Altura:</strong> <span id="headingText">0° | Y: 0.00m</span></div>
+    <div><strong>Bloques activos:</strong> <span id="blockCount">3</span></div>
+  </div>
+
+  <div class="controls">
+    <button class="primary" id="btnToggle">Pausar / Reanudar</button>
+    <select id="behaviorMode">
+      <option value="auto">Modo: Auto (Trepa bajos / Rodea altos)</option>
+      <option value="climb">Modo: Trepar Todo</option>
+      <option value="avoid">Modo: Cambiar Dirección Siempre</option>
+    </select>
+    <button id="btnFrontHigh">+ Bloque Alto al Frente</button>
+    <button id="btnFrontLow">+ Bloque Bajo al Frente</button>
+    <button id="btnFollow">Cámara: Seguir (ON)</button>
+    <button id="btnClear">Limpiar Bloques</button>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    const container = document.getElementById('canvas-container');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x090c12);
+    scene.fog = new THREE.FogExp2(0x090c12, 0.011);
+
+    const camera = new THREE.PerspectiveCamera(46, window.innerWidth / window.innerHeight, 0.1, 300);
+    camera.position.set(-9, 7.5, -11);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.25;
+    container.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.maxPolarAngle = Math.PI / 2 - 0.03;
+
+    // Iluminación dinámica que sigue a la araña en el mundo abierto
+    scene.add(new THREE.AmbientLight(0x3b4861, 1.5));
+
+    const keyLight = new THREE.DirectionalLight(0xffffff, 2.5);
+    keyLight.position.set(14, 24, 14);
+    keyLight.castShadow = true;
+    keyLight.shadow.mapSize.set(2048, 2048);
+    const sBounds = 32;
+    keyLight.shadow.camera.left = -sBounds;
+    keyLight.shadow.camera.right = sBounds;
+    keyLight.shadow.camera.top = sBounds;
+    keyLight.shadow.camera.bottom = -sBounds;
+    scene.add(keyLight);
+    scene.add(keyLight.target);
+
+    const redRim = new THREE.DirectionalLight(0xef4444, 1.15);
+    redRim.position.set(-14, 8, -14);
+    scene.add(redRim);
+
+    // Suelo infinito (se reposiciona bajo la araña sin cortes)
+    const floor = new THREE.Mesh(
+      new THREE.PlaneGeometry(400, 400),
+      new THREE.MeshStandardMaterial({ color: 0x101622, roughness: 0.72, metalness: 0.25 })
+    );
+    floor.rotation.x = -Math.PI / 2;
+    floor.receiveShadow = true;
+    scene.add(floor);
+
+    const gridSize = 200;
+    const gridDivisions = 100;
+    const cellStep = gridSize / gridDivisions; // 2m por celda
+    const grid = new THREE.GridHelper(gridSize, gridDivisions, 0x334155, 0x1b2538);
+    grid.position.y = 0.01;
+    scene.add(grid);
+
+    // Materiales del diseño técnico
+    const armorDarkMat = new THREE.MeshStandardMaterial({ color: 0x161920, roughness: 0.28, metalness: 0.72 });
+    const armorSlateMat = new THREE.MeshStandardMaterial({ color: 0x2a303c, roughness: 0.34, metalness: 0.65 });
+    const elastomerJointMat = new THREE.MeshStandardMaterial({ color: 0x202530, roughness: 0.72, metalness: 0.12 });
+    const redLedMat = new THREE.MeshStandardMaterial({
+      color: 0xff1f1f,
+      emissive: 0xff1414,
+      emissiveIntensity: 3.4,
+      roughness: 0.2
+    });
+
+    // --- ARAÑA ROBÓTICA SUAVE ---
+    const spiderRoot = new THREE.Group();
+    scene.add(spiderRoot);
+
+    const bodyGroup = new THREE.Group();
+    bodyGroup.position.y = 1.65;
+    spiderRoot.add(bodyGroup);
+
+    const abdMain = new THREE.Mesh(new THREE.SphereGeometry(1.18, 32, 24), armorDarkMat);
+    abdMain.scale.set(1.06, 0.82, 1.48);
+    abdMain.position.set(0, 0.28, -1.25);
+    abdMain.castShadow = true;
+    bodyGroup.add(abdMain);
+
+    const abdPlateTop = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.22, 1.75), armorSlateMat);
+    abdPlateTop.position.set(0, 1.02, -1.22);
+    abdPlateTop.rotation.x = -0.06;
+    abdPlateTop.castShadow = true;
+    bodyGroup.add(abdPlateTop);
+
+    const redStripe = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.08, 1.65), redLedMat);
+    redStripe.position.set(0, 1.14, -1.22);
+    redStripe.rotation.x = -0.06;
+    bodyGroup.add(redStripe);
+
+    for (let i = 0; i < 3; i++) {
+      const band = new THREE.Mesh(new THREE.TorusGeometry(0.98 - i * 0.1, 0.055, 10, 28), elastomerJointMat);
+      band.position.set(0, 0.28, -0.75 - i * 0.48);
+      band.scale.set(1.05, 0.82, 1);
+      bodyGroup.add(band);
+    }
+
+    const headShell = new THREE.Mesh(new THREE.SphereGeometry(0.84, 28, 22), armorDarkMat);
+    headShell.scale.set(1.05, 0.76, 1.18);
+    headShell.position.set(0, 0.08, 0.55);
+    headShell.castShadow = true;
+    bodyGroup.add(headShell);
+
+    const browArmor = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.18, 0.95), armorSlateMat);
+    browArmor.position.set(0, 0.52, 0.68);
+    browArmor.rotation.x = 0.22;
+    bodyGroup.add(browArmor);
+
+    [
+      [-0.18, 0.12, 1.46, 0.105],
+      [ 0.18, 0.12, 1.46, 0.105],
+      [ 0.00, 0.04, 1.50, 0.075],
+      [-0.42, 0.08, 1.32, 0.075],
+      [ 0.42, 0.08, 1.32, 0.075]
+    ].forEach(([x, y, z, r]) => {
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 16), redLedMat);
+      eye.position.set(x, y, z);
+      bodyGroup.add(eye);
+    });
+
+    const eyeGlow = new THREE.PointLight(0xff1e1e, 3.8, 6.5);
+    eyeGlow.position.set(0, 0.15, 1.85);
+    bodyGroup.add(eyeGlow);
+
+    [-0.25, 0.25].forEach(qx => {
+      const fang = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.58, 12), armorSlateMat);
+      fang.position.set(qx, -0.24, 1.45);
+      fang.rotation.x = Math.PI * 0.84;
+      bodyGroup.add(fang);
+    });
+
+    // 8 Patas articuladas
+    const legs = [];
+    const legZ = [0.88, 0.44, 0.0, -0.44];
+    const legYawSpread = [0.72, 0.26, -0.22, -0.68];
+
+    for (const side of [-1, 1]) {
+      for (let i = 0; i < 4; i++) {
+        const coxaPivot = new THREE.Group();
+        coxaPivot.position.set(side * 0.72, 0.0, legZ[i]);
+        bodyGroup.add(coxaPivot);
+
+        coxaPivot.add(new THREE.Mesh(new THREE.SphereGeometry(0.16, 14, 14), elastomerJointMat));
+
+        const femurPivot = new THREE.Group();
+        coxaPivot.add(femurPivot);
+
+        const femurMesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.115, 1.25, 8, 16), armorDarkMat);
+        femurMesh.position.set(side * 0.65, 0.52, 0);
+        femurMesh.rotation.z = -side * 0.92;
+        femurMesh.castShadow = true;
+        femurPivot.add(femurMesh);
+
+        const femurTrim = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.06, 0.14), armorSlateMat);
+        femurTrim.position.set(side * 0.65, 0.63, 0);
+        femurTrim.rotation.z = side * 0.65;
+        femurPivot.add(femurTrim);
+
+        const kneePivot = new THREE.Group();
+        kneePivot.position.set(side * 1.25, 0.95, 0);
+        femurPivot.add(kneePivot);
+
+        kneePivot.add(new THREE.Mesh(new THREE.SphereGeometry(0.145, 14, 14), elastomerJointMat));
+
+        const kneeRing = new THREE.Mesh(new THREE.TorusGeometry(0.135, 0.025, 8, 20), redLedMat);
+        kneeRing.rotation.y = Math.PI / 2;
+        kneePivot.add(kneeRing);
+
+        const tibiaMesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.088, 1.95, 8, 16), armorDarkMat);
+        tibiaMesh.position.set(side * 0.58, -1.12, 0);
+        tibiaMesh.rotation.z = side * 0.45;
+        tibiaMesh.castShadow = true;
+        kneePivot.add(tibiaMesh);
+
+        const footPad = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.28, 10), armorSlateMat);
+        footPad.position.set(side * 1.04, -2.12, 0);
+        footPad.rotation.z = -side * 0.28;
+        kneePivot.add(footPad);
+
+        legs.push({
+          side,
+          coxaPivot,
+          femurPivot,
+          kneePivot,
+          baseYaw: side * legYawSpread[i],
+          phase: ((i % 2 === 0 ? 0 : Math.PI) + (side === 1 ? Math.PI : 0))
+        });
+      }
+    }
+
+    // 5 Sensores láser frontales en abanico para detección temprana
+    const sensorRays = [];
+    [-0.65, -0.32, 0, 0.32, 0.65].forEach(ang => {
+      const geo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 1.55, 1.48),
+        new THREE.Vector3(Math.sin(ang) * 5.6, 0.55, 1.48 + Math.cos(ang) * 5.6)
+      ]);
+      const line = new THREE.Line(
+        geo,
+        new THREE.LineBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.42 })
+      );
+      spiderRoot.add(line);
+      sensorRays.push({ line, angle: ang });
+    });
+
+    // --- GESTIÓN DE BLOQUES EN MUNDO ABIERTO ---
+    const blocks = [];
+
+    function addBlock(x, z, width, height, depth) {
+      const geo = new THREE.BoxGeometry(width, height, depth);
+      const mat = new THREE.MeshStandardMaterial({
+        color: 0x283244,
+        roughness: 0.42,
+        metalness: 0.55
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(x, height / 2, z);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+
+      const isClimbable = height <= 1.85;
+      const edges = new THREE.LineSegments(
+        new THREE.EdgesGeometry(geo),
+        new THREE.LineBasicMaterial({ color: isClimbable ? 0xfbbf24 : 0x38bdf8 })
+      );
+      mesh.add(edges);
+
+      scene.add(mesh);
+      blocks.push({ x, z, width, height, depth, mesh, mat });
+      document.getElementById('blockCount').textContent = blocks.length;
+    }
+
+    function getSurfaceHeightAt(x, z) {
+      let h = 0;
+      const pad = 0.55;
+      for (const b of blocks) {
+        if (
+          x >= b.x - b.width / 2 - pad &&
+          x <= b.x + b.width / 2 + pad &&
+          z >= b.z - b.depth / 2 - pad &&
+          z <= b.z + b.depth / 2 + pad
+        ) {
+          h = Math.max(h, b.height);
+        }
+      }
+      return h;
+    }
+
+    // Algunos bloques iniciales repartidos
+    addBlock(0, 8, 4.4, 1.2, 4.4);      // Bloque bajo trepable
+    addBlock(2.5, 18, 3.4, 3.4, 3.4);   // Bloque alto para cambiar de rumbo
+    addBlock(-8, 14, 3.2, 3.0, 3.2);    // Otro bloque alto en ruta alternativa
+
+    // --- ESTADO DE SIMULACIÓN EN MUNDO ABIERTO ---
+    const sim = {
+      running: true,
+      followCam: true,
+      mode: 'auto',
+      time: 0,
+      pos: new THREE.Vector3(0, 0, 0),
+      groundY: 0,
+      heading: 0,
+      speed: 0.052,
+      turnRate: 0,
+      wanderTimer: 0
+    };
+
+    const actionEl = document.getElementById('actionText');
+    const posEl = document.getElementById('posText');
+    const headingEl = document.getElementById('headingText');
+
+    function updateNavigation() {
+      const lookDist = 5.4;
+      const forwardX = sim.pos.x + Math.sin(sim.heading) * 3.2;
+      const forwardZ = sim.pos.z + Math.cos(sim.heading) * 3.2;
+
+      let leftClearance = 0;
+      let rightClearance = 0;
+      let minRatio = 1;
+      let hitBlock = null;
+
+      blocks.forEach(b => b.mat.emissive.setHex(0x000000));
+
+      sensorRays.forEach(ray => {
+        const a = sim.heading + ray.angle;
+        const ox = sim.pos.x + Math.sin(sim.heading) * 1.4;
+        const oz = sim.pos.z + Math.cos(sim.heading) * 1.4;
+        let ratio = 1;
+
+        for (let t = 0.05; t <= 1.0; t += 0.05) {
+          const px = ox + Math.sin(a) * (lookDist * t);
+          const pz = oz + Math.cos(a) * (lookDist * t);
+          for (const b of blocks) {
+            const margin = 1.05;
+            if (
+              px >= b.x - b.width / 2 - margin &&
+              px <= b.x + b.width / 2 + margin &&
+              pz >= b.z - b.depth / 2 - margin &&
+              pz <= b.z + b.depth / 2 + margin
+            ) {
+              ratio = Math.min(ratio, t);
+              if (ratio < minRatio) {
+                minRatio = ratio;
+                hitBlock = b;
+              }
+              break;
+            }
+          }
+          if (ratio < 1) break;
+        }
+
+        if (ray.angle < 0) leftClearance += ratio;
+        if (ray.angle > 0) rightClearance += ratio;
+
+        const endLen = lookDist * ratio;
+        const posAttr = ray.line.geometry.attributes.position;
+        posAttr.setXYZ(1, Math.sin(ray.angle) * endLen, ratio < 1 ? 0.95 : 0.5, 1.48 + Math.cos(ray.angle) * endLen);
+        posAttr.needsUpdate = true;
+      });
+
+      const obstacleDetected = minRatio < 1;
+      const maxClimbableHeight = 1.95;
+
+      let shouldClimb = false;
+      if (hitBlock) {
+        if (sim.mode === 'climb') shouldClimb = true;
+        else if (sim.mode === 'avoid') shouldClimb = false;
+        else shouldClimb = hitBlock.height <= maxClimbableHeight;
+      }
+
+      const currentSurface = getSurfaceHeightAt(sim.pos.x, sim.pos.z);
+      const nextSurface = getSurfaceHeightAt(forwardX, forwardZ);
+      const isClimbingNow = nextSurface > currentSurface + 0.12 || currentSurface > 0.1;
+
+      if (obstacleDetected && !shouldClimb) {
+        if (hitBlock) hitBlock.mat.emissive.setHex(0x3a0808);
+        // Decide dirección hacia donde haya más espacio libre y mantiene el nuevo rumbo
+        if (sim.turnRate === 0) {
+          const dir = rightClearance >= leftClearance ? 1 : -1;
+          sim.turnRate = dir * (0.032 + Math.random() * 0.015);
+        }
+        sim.heading += sim.turnRate;
+        actionEl.textContent = "CAMBIANDO DIRECCIÓN";
+        actionEl.className = "st-avoid";
+      } else {
+        // Amortigua suavemente el giro y conserva la nueva dirección adquirida
+        sim.turnRate *= 0.88;
+        if (Math.abs(sim.turnRate) < 0.0015) sim.turnRate = 0;
+
+        // Exploración orgánica suave en mundo abierto
+        sim.wanderTimer++;
+        if (sim.wanderTimer > 180 && !isClimbingNow) {
+          sim.heading += (Math.random() - 0.5) * 0.012;
+          if (sim.wanderTimer > 260) sim.wanderTimer = 0;
+        }
+
+        if (isClimbingNow || (obstacleDetected && shouldClimb)) {
+          if (hitBlock) hitBlock.mat.emissive.setHex(0x382405);
+          actionEl.textContent = "TREPANDO BLOQUE";
+          actionEl.className = "st-climb";
+        } else {
+          actionEl.textContent = "EXPLORANDO";
+          actionEl.className = "st-walk";
+        }
+      }
+
+      // Avance continuo sin límites de pista
+      const dx = Math.sin(sim.heading) * sim.speed;
+      const dz = Math.cos(sim.heading) * sim.speed;
+      sim.pos.x += dx;
+      sim.pos.z += dz;
+
+      const targetGround = getSurfaceHeightAt(sim.pos.x, sim.pos.z);
+      sim.groundY += (targetGround - sim.groundY) * 0.14;
+      sim.pos.y = sim.groundY;
+
+      spiderRoot.position.copy(sim.pos);
+      spiderRoot.rotation.y = sim.heading;
+
+      const pitchTarget = -(nextSurface - currentSurface) * 0.25;
+      bodyGroup.rotation.x += (pitchTarget - bodyGroup.rotation.x) * 0.12;
+
+      // Desplazar piso, cuadrícula y luces con la araña para mundo infinito sin cortes
+      floor.position.x = sim.pos.x;
+      floor.position.z = sim.pos.z;
+      grid.position.x = Math.floor(sim.pos.x / cellStep) * cellStep;
+      grid.position.z = Math.floor(sim.pos.z / cellStep) * cellStep;
+
+      keyLight.position.set(sim.pos.x + 14, 24, sim.pos.z + 14);
+      keyLight.target.position.copy(sim.pos);
+
+      // Telemetría en tiempo real
+      posEl.textContent = `${sim.pos.x.toFixed(1)}, ${sim.pos.z.toFixed(1)}`;
+      const deg = (((sim.heading * 180) / Math.PI) % 360 + 360) % 360;
+      headingEl.textContent = `${deg.toFixed(0)}° | Y: ${sim.groundY.toFixed(2)}m`;
+    }
+
+    function animateLegs(t) {
+      bodyGroup.position.y = 1.65 + Math.sin(t * 2.1) * 0.05;
+      bodyGroup.rotation.z = Math.sin(t * 1.05) * 0.035;
+
+      legs.forEach(leg => {
+        const cycle = t + leg.phase;
+        const swing = Math.sin(cycle);
+        const lift = Math.max(0, Math.cos(cycle));
+
+        leg.coxaPivot.rotation.y = leg.baseYaw + swing * 0.25;
+        leg.femurPivot.rotation.z = leg.side * lift * 0.30;
+        leg.kneePivot.rotation.z = -leg.side * lift * 0.38;
+      });
+    }
+
+    // --- COLOCAR BLOQUES CON CLIC EN EL SUELO ---
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+    let pointerDownPos = { x: 0, y: 0 };
+
+    renderer.domElement.addEventListener('pointerdown', (e) => {
+      pointerDownPos = { x: e.clientX, y: e.clientY };
+    });
+
+    renderer.domElement.addEventListener('pointerup', (e) => {
+      if (e.button !== 0) return;
+      // Evitar colocar bloque si el usuario solo estaba arrastrando la cámara
+      const moved = Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y);
+      if (moved > 5) return;
+
+      mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+      raycaster.setFromCamera(mouse, camera);
+
+      const hits = raycaster.intersectObject(floor);
+      if (hits.length > 0) {
+        const pt = hits[0].point;
+        if (e.shiftKey) {
+          addBlock(pt.x, pt.z, 4.0, 1.2, 4.0); // Bloque bajo trepable
+        } else {
+          addBlock(pt.x, pt.z, 3.2, 3.2, 3.2); // Bloque alto para cambiar dirección
+        }
+      }
+    });
+
+    // --- BUCLE PRINCIPAL ---
+    let prevSpiderPos = new THREE.Vector3(0, 0, 0);
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      if (sim.running) {
+        sim.time += 0.15;
+        updateNavigation();
+        animateLegs(sim.time);
+
+        if (sim.followCam) {
+          const deltaMove = new THREE.Vector3().subVectors(sim.pos, prevSpiderPos);
+          camera.position.add(deltaMove);
+          controls.target.copy(new THREE.Vector3(sim.pos.x, sim.pos.y + 1.3, sim.pos.z));
+        }
+        prevSpiderPos.copy(sim.pos);
+      }
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    // --- BOTONES ---
+    document.getElementById('btnToggle').addEventListener('click', () => {
+      sim.running = !sim.running;
+    });
+
+    document.getElementById('behaviorMode').addEventListener('change', (e) => {
+      sim.mode = e.target.value;
+    });
+
+    document.getElementById('btnFrontHigh').addEventListener('click', () => {
+      const bx = sim.pos.x + Math.sin(sim.heading) * 7.5;
+      const bz = sim.pos.z + Math.cos(sim.heading) * 7.5;
+      addBlock(bx, bz, 3.2, 3.2, 3.2);
+    });
+
+    document.getElementById('btnFrontLow').addEventListener('click', () => {
+      const bx = sim.pos.x + Math.sin(sim.heading) * 7.5;
+      const bz = sim.pos.z + Math.cos(sim.heading) * 7.5;
+      addBlock(bx, bz, 4.2, 1.2, 4.2);
+    });
+
+    const btnFollow = document.getElementById('btnFollow');
+    btnFollow.addEventListener('click', () => {
+      sim.followCam = !sim.followCam;
+      btnFollow.textContent = sim.followCam ? 'Cámara: Seguir (ON)' : 'Cámara: Libre (OFF)';
+    });
+
+    document.getElementById('btnClear').addEventListener('click', () => {
+      blocks.forEach(b => scene.remove(b.mesh));
+      blocks.length = 0;
+      document.getElementById('blockCount').textContent = '0';
+    });
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    animate();
+  </script>
+</body>
+</html>
